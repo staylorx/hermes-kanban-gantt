@@ -10,13 +10,14 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // import() (dynamic) so this file also runs when the artifact was built with
-// ESM export statements.
-const core = await import(join(HERE, '..', 'desktop', 'gantt-core.js'))
+// ESM export statements. pathToFileURL (not a bare path) is required: dynamic
+// import() needs a real file:// URL on Windows (a C:\ path is refused).
+const core = await import(pathToFileURL(join(HERE, '..', 'desktop', 'gantt-core.js')))
 
 const { barRange, taskBars, shortId, matchesSearch, buildRows, treeRows, treeMarks, TREE_SLOT, TREE_AXIS, TREE_INSET,
   computeDomain, ticks, tickUnit, statusTone, DAY, MIN_BAR,

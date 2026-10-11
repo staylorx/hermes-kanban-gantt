@@ -233,11 +233,18 @@ export const jsxs = (type, props) => invokeComponent(type, props)
 export const Fragment = 'Fragment'
 `)
 
-const loaderSrc = `const STUB_URLS = ${JSON.stringify({
-  '@hermes/plugin-sdk': pathToFileURL(join(STUBS_DIR, 'sdk.mjs')).href,
-  react: pathToFileURL(join(STUBS_DIR, 'react.mjs')).href,
-  'react/jsx-runtime': pathToFileURL(join(STUBS_DIR, 'jsx-runtime.mjs')).href
-}, null, 2)}
+// The loader is regenerated here and committed, so it must be IDENTICAL on
+// every machine: resolve the stub URLs relative to the loader's own
+// import.meta.url (which points at this tests/ui dir wherever the repo sits),
+// never absolute filesystem paths — an absolute path makes the committed file
+// machine-specific (and it is tracked, so it shows a spurious diff on any
+// other checkout).
+const loaderSrc = `const HERE = new URL('.', import.meta.url)
+const STUB_URLS = {
+  '@hermes/plugin-sdk': new URL('./.stubs/sdk.mjs', HERE).href,
+  react: new URL('./.stubs/react.mjs', HERE).href,
+  'react/jsx-runtime': new URL('./.stubs/jsx-runtime.mjs', HERE).href
+}
 export function resolve(specifier, context, nextResolve) {
   if (STUB_URLS[specifier]) {
     return { url: STUB_URLS[specifier], shortCircuit: true }

@@ -1,7 +1,8 @@
+const HERE = new URL('.', import.meta.url)
 const STUB_URLS = {
-  "@hermes/plugin-sdk": "file:///home/blavenie/git/hermes-kanban-gantt/tests/ui/.stubs/sdk.mjs",
-  "react": "file:///home/blavenie/git/hermes-kanban-gantt/tests/ui/.stubs/react.mjs",
-  "react/jsx-runtime": "file:///home/blavenie/git/hermes-kanban-gantt/tests/ui/.stubs/jsx-runtime.mjs"
+  '@hermes/plugin-sdk': new URL('./.stubs/sdk.mjs', HERE).href,
+  react: new URL('./.stubs/react.mjs', HERE).href,
+  'react/jsx-runtime': new URL('./.stubs/jsx-runtime.mjs', HERE).href
 }
 export function resolve(specifier, context, nextResolve) {
   if (STUB_URLS[specifier]) {
