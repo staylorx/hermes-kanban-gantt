@@ -73,6 +73,7 @@ import { subscribeGantt } from './ws'
 import { WS_STATE, canPush } from './core/ws-core'
 import { TitlebarBoardSwitcher } from './ui/TitlebarBoardSwitcher'
 import { NewTaskDialog } from './ui/NewTaskDialog'
+import { ChangeWorkspaceDialog } from './ui/ChangeWorkspaceDialog'
 import { MoveTaskDialog } from './ui/MoveTaskDialog'
 import { TaskRelations } from './ui/TaskRelations'
 import { ReparentChoiceDialog, MoveUnderDialog, reasonLabel } from './ui/ReparentChooser'
@@ -1267,6 +1268,20 @@ function TaskDrawer({ taskId, board, onClose, assignees = [], tasks = [], docked
     onError: error => toast('error', String(error?.message || error))
   })
 
+  // Change workspace: two columns on the task row; switch the dialog open state.
+  const [wsOpen, setWsOpen] = useState(false)
+  const workspaceMutation = useMutation({
+    mutationFn: ({ kind, path, moveToReady }) => apiFetch(
+      `/tasks/${encodeURIComponent(shownId)}/workspace${board ? `?board=${encodeURIComponent(board)}` : ''}`,
+      { method: 'PATCH', body: { kind, path, move_to_ready: moveToReady } }),
+    onSuccess: () => {
+      void refetch()
+      void queryClient.invalidateQueries({ queryKey: ['kanban-gantt', 'gantt'] })
+      toast('success', i18n.changeWorkspaceDone)
+    },
+    onError: error => toast('error', String(error?.message || error))
+  })
+
   // The description write: same shape as the reference kanban drawer's
   // DescriptionSection (raw markdown in a textarea, saved explicitly). The
   // refetch + gantt invalidation keep the drawer and the timeline in step; the
@@ -1425,6 +1440,16 @@ function TaskDrawer({ taskId, board, onClose, assignees = [], tasks = [], docked
                         children: jsxs('span', { className: 'flex items-center gap-2', children: [
                           jsx(Codicon, { name: 'arrow-circle-right', size: '0.85rem' }),
                           i18n.moveToBoard
+                        ] })
+                      }),
+                      // Change the task's workspace kind/path — most often back
+                      // to scratch when a worktree card is stuck.
+                      jsx(DropdownMenuItem, {
+                        className: 'flex items-center gap-2 px-3 py-1.5',
+                        onClick: () => setWsOpen(true),
+                        children: jsxs('span', { className: 'flex items-center gap-2', children: [
+                          jsx(Codicon, { name: 'folder-opened', size: '0.85rem' }),
+                          i18n.changeWorkspace
                         ] })
                       }),
                       more.length ? jsx(DropdownMenuSeparator, {}) : null,
@@ -1801,6 +1826,20 @@ function TaskDrawer({ taskId, board, onClose, assignees = [], tasks = [], docked
         i18n,
         onClose: () => setMoveBoardOpen(false),
         onMove: toBoard => moveMutation.mutateAsync(toBoard)
+      }),
+      // Change the task's workspace kind/path (and optionally requeue it back
+      // to Ready). Reads the current values off the loaded detail.
+      jsx(ChangeWorkspaceDialog, {
+        open: wsOpen,
+        taskId: shownId,
+        taskTitle: cleanTitle(data?.task?.title, data?.task?.label),
+        currentKind: data?.task?.workspace_kind || 'scratch',
+        currentPath: data?.task?.workspace_path,
+        currentStatus: data?.task?.status || 'todo',
+        i18n,
+        onClose: () => setWsOpen(false),
+        onChange: (kind, path, moveToReady) =>
+          workspaceMutation.mutateAsync({ kind, path, moveToReady })
       })
   ]
 

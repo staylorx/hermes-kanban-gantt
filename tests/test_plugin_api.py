@@ -74,7 +74,13 @@ def board(tmp_path, monkeypatch):
         shutil.rmtree(stale, ignore_errors=True) if stale.is_dir() else (
             stale.unlink(missing_ok=True))
 
-    # init_db + create tasks through the domain layer (invariants included)
+    # ── init_db + create tasks through the domain layer (invariants included)
+    # The core `connect()` refuses to open/init a non-default board that has no
+    # metadata (kanban_db_connect._refuse_dead_board_resurrection:713), so the
+    # board must be CREATEd first (write_board_metadata + init_db) — matching
+    # `hermes kanban boards create`. Sandboxed: lands under the tmp boards root.
+    from hermes_cli import kanban_db_boards as _boards
+    _boards.create_board(TEST_SLUG, name="kanban-gantt-test")
     conn = kbc.connect(board=TEST_SLUG)
     parent = kanban_db.create_task(conn, title="[TEST] parent task", priority=1,
                                    created_by="test")
@@ -353,6 +359,59 @@ def test_description_is_editable_and_recorded_as_an_edit(client):
     http.patch(f"/tasks/{tid}/description?board={board['slug']}", json={"body": original})
 
 
+def test_change_workspace(client):
+    """Change a task's workspace kind (and optional path) via PATCH /workspace.
+
+    A queued card picks the new workspace up at claim time (the dispatcher
+    resolves it fresh), so changing the stored kind/path is safe; scratch clears
+    the path (it is derived from the board root)."""
+    http, board = client
+    tid = board["solo"]
+
+    def detail():
+        return http.get(f"/tasks/{tid}?board={board['slug']}").json()["task"]
+
+    # worktree with an explicit path -> stored.
+    r = http.patch(f"/tasks/{tid}/workspace?board={board['slug']}",
+                   json={"kind": "worktree", "path": "C:/w/foo"})
+    assert r.status_code == 200
+    assert detail()["workspace_kind"] == "worktree"
+    assert detail()["workspace_path"] == "C:/w/foo"
+
+    # back to scratch -> clears the path (derived from the board root).
+    r = http.patch(f"/tasks/{tid}/workspace?board={board['slug']}", json={"kind": "scratch"})
+    assert r.status_code == 200
+    d = detail()
+    assert d["workspace_kind"] == "scratch"
+    assert d["workspace_path"] is None
+
+    # A dir kind without a path is refused.
+    assert http.patch(f"/tasks/{tid}/workspace?board={board['slug']}",
+                      json={"kind": "dir"}).status_code == 400
+    # An unknown kind is refused.
+    assert http.patch(f"/tasks/{tid}/workspace?board={board['slug']}",
+                      json={"kind": "bogus"}).status_code == 400
+
+
+def test_change_workspace_can_move_to_ready(client):
+    """A blocked/todo card returns to ready when move_to_ready is asked — the
+    'fix it and requeue' path that un-sticks a workspace-broken card."""
+    http, board = client
+    tid = board["solo"]  # fresh todo task
+
+    # Park it somewhere unambiguous, then change + requeue in one call.
+    r = http.patch(f"/tasks/{tid}/status?board={board['slug']}", json={"action": "blocked"})
+    assert r.status_code == 200
+    r = http.patch(f"/tasks/{tid}/workspace?board={board['slug']}",
+                   json={"kind": "scratch", "move_to_ready": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["status_after"] == "ready"
+    d = http.get(f"/tasks/{tid}?board={board['slug']}").json()["task"]
+    assert d["status"] == "ready"
+    assert d["workspace_kind"] == "scratch"
+
+
 def test_a_finished_parent_is_accepted_and_does_not_gate_the_child(client):
     """Dropping a task under a DONE task is the normal case, not an error.
 
@@ -606,7 +665,7 @@ def test_create_task_rejects_empty_title(client):
 
 def test_create_task_rejects_foreign_parent(client):
     http, board = client
-    other = kbc.connect(board="kanban-gantt-test-other")
+    other = _connect_board("kanban-gantt-test-other")
     try:
         foreign = kanban_db.create_task(other, title="[TEST] other board", created_by="test")
     finally:
@@ -620,11 +679,25 @@ def test_create_task_rejects_foreign_parent(client):
 # ---------------------------------------------------------------------------
 
 def _mk(slug, title, **kw):
-    conn = kbc.connect(board=slug)
+    conn = _connect_board(slug)
     try:
         return kanban_db.create_task(conn, title=title, created_by="test", **kw)
     finally:
         conn.close()
+
+
+def _connect_board(slug):
+    """Open a board connection, creating a fresh board first when needed.
+
+    The core ``connect()`` refuses to open/init a non-default board that has
+    no metadata (kanban_db_connect._refuse_dead_board_resurrection), so a test
+    that spins up its own board (a cross-board target, a foreign-parent board)
+    must create it before connecting. Sandboxed by HERMES_KANBAN_HOME.
+    """
+    from hermes_cli import kanban_db_boards as _boards
+    if slug != "default":
+        _boards.create_board(slug)
+    return kbc.connect(board=slug)
 
 
 def _parents(http, task_id, slug):
@@ -837,7 +910,7 @@ def test_move_to_a_board_that_already_has_history(client):
     """
     http, board = client
     target = "kanban-gantt-move-target"
-    tconn = kbc.connect(board=target)
+    tconn = _connect_board(target)
     # Two residents make the target's event ids overlap the source's.
     kanban_db.create_task(tconn, title="[TEST] target resident", created_by="test")
     resident2 = kanban_db.create_task(tconn, title="[TEST] target resident 2", created_by="test")
@@ -913,7 +986,7 @@ def test_move_keeps_the_task_id_unless_the_target_already_uses_it(client):
     """
     http, board = client
     target = "kanban-gantt-move-idclash"
-    tconn = kbc.connect(board=target)
+    tconn = _connect_board(target)
     # A resident that squats the id we are about to move.
     tconn.execute(
         "INSERT INTO tasks (id, title, status, created_at) VALUES (?, ?, 'ready', ?)",

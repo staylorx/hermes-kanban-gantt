@@ -11,7 +11,7 @@ import { build } from 'esbuild'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -50,7 +50,7 @@ async function loadState() {
     plugins: [sdkStub],
     logLevel: 'silent'
   })
-  const mod = await import(out)
+  const mod = await import(pathToFileURL(out))
   await rm(dir, { recursive: true, force: true }) // the module is already loaded
   return mod
 }

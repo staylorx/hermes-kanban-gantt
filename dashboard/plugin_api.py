@@ -828,6 +828,95 @@ def update_description(task_id: str, payload: DescriptionBody, board: Optional[s
         conn.close()
 
 
+class WorkspaceBody(BaseModel):
+    kind: str                  # scratch | worktree | dir
+    path: Optional[str] = None
+    move_to_ready: bool = False  # requeue a blocked/todo card after the change
+
+
+@router.patch("/tasks/{task_id}/workspace")
+def change_workspace(task_id: str, payload: WorkspaceBody,
+                     board: Optional[str] = Query(None)):
+    """Change a task's workspace kind (and optional path).
+
+    Mirrors the /description route: one UPDATE plus an `edited` event, then
+    the post-commit observer. Workspace is resolved by the dispatcher at
+    claim time, so changing these columns on a queued task is safe; a
+    *running* task has already resolved its workspace and is refused, like
+    /move refuses running tasks. `scratch` clears the path (it is derived
+    from the board root); leaving `worktree` clears the branch name.
+
+    Changing the workspace does NOT reset a card's status — a blocked/todo
+    card whose workspace change was the fix never re-runs on its own — so
+    `move_to_ready` promotes it back to Ready through the domain's ready
+    path (parent gating and the unblock transition apply), which is what
+    un-sticks the "broke forever" case end to end.
+    """
+    from hermes_cli import kanban_db
+
+    kind = (payload.kind or "").strip()
+    if kind not in kanban_db.VALID_WORKSPACE_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"workspace_kind must be one of {sorted(kanban_db.VALID_WORKSPACE_KINDS)}",
+        )
+    path = (payload.path or "").strip() or None
+    # `dir` and `worktree` need somewhere to point; scratch always derives its
+    # own path. (Domain allows a pathless worktree that anchors on the board
+    # default, but dir never does.)
+    if kind != "scratch" and path is None and kind == "dir":
+        raise HTTPException(status_code=400,
+                            detail="workspace_kind=dir requires a path")
+    move_to_ready = bool(payload.move_to_ready)
+
+    slug = _board_for_task(task_id, board)
+    conn = _connect(slug, ro=False)
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT status, current_run_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"unknown task {task_id}")
+        if row[0] == "running" or row[1]:
+            raise HTTPException(status_code=409,
+                                detail="cannot change the workspace of a running task")
+        with kanban_db.write_txn(conn):
+            if kind == "scratch":
+                conn.execute("UPDATE tasks SET workspace_kind = ?, workspace_path = NULL "
+                             "WHERE id = ?", (kind, task_id))
+            else:
+                conn.execute("UPDATE tasks SET workspace_kind = ?, workspace_path = ? "
+                             "WHERE id = ?", (kind, path, task_id))
+            # branch_name is meaningless off a worktree
+            if kind != "worktree":
+                conn.execute("UPDATE tasks SET branch_name = NULL WHERE id = ?", (task_id,))
+            conn.execute(
+                "INSERT INTO task_events (task_id, kind, payload, created_at) "
+                "VALUES (?, 'edited', NULL, ?)", (task_id, int(time.time())))
+        kanban_db.notify_task_updated(conn, task_id,
+                                      ["workspace_kind", "workspace_path"], board=slug)
+
+        # Optional requeue through the domain's ready path. The same
+        # unblock/promote semantics as the /status 'ready' action: a blocked
+        # card is unblocked, a scheduled card is unblocked, a todo/triage card
+        # is set to ready; parent gating may demote it back to todo (reported).
+        status_after = row[0]
+        if move_to_ready:
+            if row[0] in ("blocked", "scheduled"):
+                kanban_db.unblock_task(conn, task_id)
+                status_after = "ready"
+            elif row[0] not in ("ready", "done", "archived", "running"):
+                from hermes_cli.kanban_db import _set_status_direct
+                if _set_status_direct(conn, task_id, "ready"):
+                    status_after = "ready"
+                else:
+                    status_after = _status_of(conn, task_id)
+        return {"ok": True, "task_id": task_id, "kind": kind, "path": path,
+                "move_to_ready": move_to_ready, "status_after": status_after}
+    finally:
+        conn.close()
+
+
 class NewTaskBody(BaseModel):
     title: str
     body: Optional[str] = None

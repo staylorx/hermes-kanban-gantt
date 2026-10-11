@@ -17,3 +17,8 @@ tests/ui/.stubs/
 .agents/plans/
 .junie/*
 !.junie/skills
+
+# Local development ignores
+.hermes/plans/
+.hermes-catalog.json
+.test-venv/
