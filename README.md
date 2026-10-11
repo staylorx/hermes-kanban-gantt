@@ -114,7 +114,7 @@ node --test tests/gantt-core.test.mjs tests/rest-method.test.mjs
 node tests/ui/esm-render.mjs
 
 # backend (isolated venv; HERMES_AGENT_HOME points at a hermes-agent checkout)
-tests/run_tests.sh
+python tests/run_tests.py
 ```
 
 ## Visual validation

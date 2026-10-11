@@ -1,11 +1,16 @@
-"""Integration test for POST /tasks/{id}/move — run standalone."""
+"""Integration test for POST /tasks/{id}/move — run standalone (cross-platform)."""
 import os, sqlite3, sys, tempfile, time
 from pathlib import Path
 
 tmp = tempfile.mkdtemp()
 os.environ['HERMES_KANBAN_HOME'] = tmp
 os.environ['KANBAN_GANTT_BOARDS'] = os.path.join(tmp, 'kanban', 'boards')
-os.environ['PYTHONPATH'] = os.path.expanduser('~/.hermes/hermes-agent')
+# Point hermes_cli at the hermes-agent checkout WITHOUT clobbering the
+# PYTHONPATH the runner already set (which includes this plugin's dashboard
+# dir, so `from plugin_api import ...` resolves). Respect HERMES_AGENT_HOME like
+# every other harness; fall back to ~/.hermes/hermes-agent.
+_agent = os.environ.get('HERMES_AGENT_HOME') or os.path.expanduser('~/.hermes/hermes-agent')
+os.environ['PYTHONPATH'] = _agent + (os.pathsep + os.environ.get('PYTHONPATH', '') if os.environ.get('PYTHONPATH') else '')
 
 from fastapi.testclient import TestClient
 from plugin_api import create_app, _board_db_path, _board_for_task
@@ -15,9 +20,11 @@ c = TestClient(create_app())
 H = 3600
 now = int(time.time())
 
-# two boards
-c.get('/meta')
+# both boards must exist up front: the newer hermes-agent refuses to open a
+# non-default board with no metadata
+kb.create_board('src-board', name='Source board')
 kb.create_board('tgt-board', name='Target board')
+c.get('/meta')
 assert c.post('/tasks?board=src-board', json={'title': 'parent task'}).status_code == 200
 parent = c.get('/gantt?board=src-board').json()['tasks'][0]['id']
 child = c.post('/tasks?board=src-board', json={'title': 'child task', 'parentId': parent}).json()['task_id']

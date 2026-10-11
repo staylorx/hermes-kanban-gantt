@@ -21,3 +21,4 @@ tests/ui/.stubs/
 # Local development ignores
 .hermes/plans/
 .hermes-catalog.json
+.test-venv/
