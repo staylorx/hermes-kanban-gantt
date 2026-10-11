@@ -69,6 +69,11 @@ install_file "$SCRIPT_DIR/desktop/plugin.js"                 "$HERMES_HOME/deskt
 
 # moitié backend (plugin.yaml + dashboard/)
 install_file "$SCRIPT_DIR/plugin.yaml"               "$HERMES_HOME/plugins/kanban-gantt/plugin.yaml"
+# The top-level __init__.py is required by the plugin loader (it imports the
+# plugin as hermes_plugins.<slug> via spec_from_file_location and raises
+# "No __init__.py" without it). install.sh must ship it or the plugin fails
+# to load on every machine that installs via this script.
+install_file "$SCRIPT_DIR/__init__.py"               "$HERMES_HOME/plugins/kanban-gantt/__init__.py"
 install_file "$SCRIPT_DIR/dashboard/manifest.json"   "$HERMES_HOME/plugins/kanban-gantt/dashboard/manifest.json"
 install_file "$SCRIPT_DIR/dashboard/plugin_api.py"   "$HERMES_HOME/plugins/kanban-gantt/dashboard/plugin_api.py"
 # The push route lives in its own module; without it the gateway logs
