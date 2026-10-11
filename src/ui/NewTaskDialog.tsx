@@ -53,7 +53,7 @@ export type ProjectLike = {
 }
 
 /** `kanban_db.VALID_WORKSPACE_KINDS` — what the worker gets for its files. */
-const WORKSPACE_KINDS = ['scratch', 'worktree', 'dir']
+export const WORKSPACE_KINDS = ['scratch', 'worktree', 'dir']
 
 export type NewTaskValues = {
   title: string
